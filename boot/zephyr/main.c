@@ -483,7 +483,23 @@ int main(void)
 #endif
 
 #if defined(CONFIG_BOOT_USB_DFU_GPIO)
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+    const uint8_t pin_val = io_detect_pin();
+
+    #define RESET_COUNT_BITMASK (BIT(0) | BIT(1) | BIT(2))
+    const uint8_t gpregret_power_val = nrf_power_gpregret_get(NRF_POWER);
+    const uint8_t reset_count = gpregret_power_val & RESET_COUNT_BITMASK;
+    const uint8_t gpregret_power_val_no_reset_count = gpregret_power_val & ~RESET_COUNT_BITMASK;
+
+    // Increment reset count, wrapping around max lower 3 bits - Keep higher 5 bits untouched
+    nrf_power_gpregret_set(NRF_POWER, gpregret_power_val_no_reset_count | ((reset_count + 1) % (RESET_COUNT_BITMASK + 1)));
+
+    BOOT_LOG_INF("pin_val=%d, reset_count=%d", pin_val, reset_count);
+
+    if (pin_val || (reset_count == RESET_COUNT_BITMASK)) {
+#else
     if (io_detect_pin()) {
+#endif
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
         io_led_set(1);
 #endif
@@ -566,7 +582,19 @@ int main(void)
         boot_serial_enter();
 #endif
 
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+        // Enable USB and stay in DFU mode
+        rc = usb_enable(NULL);
+        if (rc) {
+            BOOT_LOG_ERR("Cannot enable USB");
+        } else {
+            BOOT_LOG_INF("Waiting for USB DFU");
+            wait_for_usb_dfu(K_FOREVER);
+            BOOT_LOG_INF("USB DFU wait time elapsed");
+        }
+#else
         FIH_PANIC;
+#endif   // CONFIG_BOOT_USB_DFU_RESET_COUNTER
     }
 
     BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
