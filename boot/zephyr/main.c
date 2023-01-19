@@ -517,6 +517,17 @@ static bool detect_pin(void)
 }
 #endif
 
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+#include <zephyr/sys/reboot.h>
+
+static void usb_status_cb(enum usb_dc_status_code status, const uint8_t *param) {
+    if(status == USB_DC_DISCONNECTED) {
+        BOOT_LOG_INF("USB disconnected: Rebooting");
+        sys_reboot(SYS_REBOOT_COLD);
+    }
+}
+#endif
+
 void main(void)
 {
     struct boot_rsp rsp;
@@ -585,7 +596,12 @@ void main(void)
 
         mcuboot_status_change(MCUBOOT_STATUS_USB_DFU_ENTERED);
 
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+        // Add USB status callback
+        rc = usb_enable(usb_status_cb);
+#else
         rc = usb_enable(NULL);
+#endif
         if (rc) {
             BOOT_LOG_ERR("Cannot enable USB");
         } else {
@@ -639,7 +655,11 @@ void main(void)
 
 #if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
         // Enable USB and stay in DFU mode
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+        rc = usb_enable(usb_status_cb);
+#else
         rc = usb_enable(NULL);
+#endif  // CONFIG_USB_DISCONNECT_REBOOT
         if (rc) {
             BOOT_LOG_ERR("Cannot enable USB");
         } else {
