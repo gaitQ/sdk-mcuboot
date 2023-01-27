@@ -40,6 +40,10 @@
 #include <fw_info.h>
 #endif
 
+#ifdef CONFIG_GAITQ_MCUBOOT_EXT
+#include "gaitq_mcuboot_ext.h"
+#endif
+
 #ifdef CONFIG_MCUBOOT_SERIAL
 #include "boot_serial/boot_serial.h"
 #include "serial_adapter/serial_adapter.h"
@@ -589,7 +593,7 @@ void main(void)
     if (pin_val || (reset_count == RESET_COUNT_BITMASK)) {
 #else
     if (detect_pin()) {
-#endif
+#endif   // defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
         gpio_pin_set_dt(&led0, 1);
 #endif
@@ -599,14 +603,17 @@ void main(void)
 #if defined(CONFIG_USB_DISCONNECT_REBOOT)
         // Add USB status callback
         rc = usb_enable(usb_status_cb);
-#else
+#else 
         rc = usb_enable(NULL);
-#endif
+#endif  // defined(CONFIG_USB_DISCONNECT_REBOOT)
         if (rc) {
             BOOT_LOG_ERR("Cannot enable USB");
         } else {
             BOOT_LOG_INF("Waiting for USB DFU");
             wait_for_usb_dfu(K_FOREVER);
+#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
+            wait_for_netcpu_update();
+#endif
             BOOT_LOG_INF("USB DFU wait time elapsed");
         }
     }
@@ -665,6 +672,9 @@ void main(void)
         } else {
             BOOT_LOG_INF("Waiting for USB DFU");
             wait_for_usb_dfu(K_FOREVER);
+#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
+            wait_for_netcpu_update();
+#endif
             BOOT_LOG_INF("USB DFU wait time elapsed");
         }
 #else
