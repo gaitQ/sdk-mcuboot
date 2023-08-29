@@ -46,8 +46,16 @@
 #include <fw_info.h>
 #endif
 
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+#include <zephyr/sys/reboot.h>
+#endif
+
 #ifdef CONFIG_GAITQ_MCUBOOT_EXT
 #include "gaitq_mcuboot_ext.h"
+#endif
+
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+#include "reboot_counter.h"
 #endif
 
 #ifdef CONFIG_MCUBOOT_SERIAL
@@ -534,13 +542,27 @@ static void boot_serial_enter()
 }
 #endif
 
-#if defined(CONFIG_USB_DISCONNECT_REBOOT)
-#include <zephyr/sys/reboot.h>
-
 static void usb_status_cb(enum usb_dc_status_code status, const uint8_t *param) {
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
     if(status == USB_DC_DISCONNECTED) {
         BOOT_LOG_INF("USB disconnected: Rebooting");
         sys_reboot(SYS_REBOOT_COLD);
+    }
+#endif
+}
+
+#if defined(CONFIG_BOOT_USB_DFU_GPIO)
+static void enable_dfu_mode(void) {
+    // Add USB status callback
+    int rc = usb_enable(usb_status_cb);
+    if (rc) {
+        BOOT_LOG_ERR("Cannot enable USB");
+    } else {
+        BOOT_LOG_INF("Waiting for USB DFU");
+        wait_for_usb_dfu(K_FOREVER);
+#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
+        wait_for_netcpu_update();
+#endif
     }
 }
 #endif
@@ -599,43 +621,23 @@ void main(void)
 #if defined(CONFIG_BOOT_USB_DFU_GPIO)
 #if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
     const uint8_t pin_val = detect_pin();
+    const bool rc_is_max = reboot_counter_is_max();
 
-    #define RESET_COUNT_BITMASK (BIT(0) | BIT(1) | BIT(2))
-    const uint8_t gpregret_power_val = nrf_power_gpregret_get(NRF_POWER);
-    const uint8_t reset_count = gpregret_power_val & RESET_COUNT_BITMASK;
-    const uint8_t gpregret_power_val_no_reset_count = gpregret_power_val & ~RESET_COUNT_BITMASK;
+    reboot_counter_increment();
 
-    // Increment reset count, wrapping around max lower 3 bits - Keep higher 5 bits untouched
-    nrf_power_gpregret_set(NRF_POWER, gpregret_power_val_no_reset_count | ((reset_count + 1) % (RESET_COUNT_BITMASK + 1)));
+    BOOT_LOG_INF("pin_val=%d, rc_is_max=%d", pin_val, rc_is_max);
 
-    BOOT_LOG_INF("pin_val=%d, reset_count=%d", pin_val, reset_count);
-
-    if (pin_val || (reset_count == RESET_COUNT_BITMASK)) {
+    if (pin_val || rc_is_max) {
 #else
     if (detect_pin()) {
-#endif   // defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+#endif    // defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
         gpio_pin_set_dt(&led0, 1);
 #endif
 
         mcuboot_status_change(MCUBOOT_STATUS_USB_DFU_ENTERED);
 
-#if defined(CONFIG_USB_DISCONNECT_REBOOT)
-        // Add USB status callback
-        rc = usb_enable(usb_status_cb);
-#else 
-        rc = usb_enable(NULL);
-#endif  // defined(CONFIG_USB_DISCONNECT_REBOOT)
-        if (rc) {
-            BOOT_LOG_ERR("Cannot enable USB");
-        } else {
-            BOOT_LOG_INF("Waiting for USB DFU");
-            wait_for_usb_dfu(K_FOREVER);
-#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
-            wait_for_netcpu_update();
-#endif
-            BOOT_LOG_INF("USB DFU wait time elapsed");
-        }
+        enable_dfu_mode();
     }
 #elif defined(CONFIG_BOOT_USB_DFU_WAIT)
     rc = usb_enable(NULL);
@@ -700,22 +702,7 @@ void main(void)
 #endif
 
 #if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
-        // Enable USB and stay in DFU mode
-#if defined(CONFIG_USB_DISCONNECT_REBOOT)
-        rc = usb_enable(usb_status_cb);
-#else
-        rc = usb_enable(NULL);
-#endif  // CONFIG_USB_DISCONNECT_REBOOT
-        if (rc) {
-            BOOT_LOG_ERR("Cannot enable USB");
-        } else {
-            BOOT_LOG_INF("Waiting for USB DFU");
-            wait_for_usb_dfu(K_FOREVER);
-#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
-            wait_for_netcpu_update();
-#endif
-            BOOT_LOG_INF("USB DFU wait time elapsed");
-        }
+        enable_dfu_mode();
 #else
         FIH_PANIC;
 #endif   // CONFIG_BOOT_USB_DFU_RESET_COUNTER
