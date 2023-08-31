@@ -40,6 +40,18 @@
 #include <fw_info.h>
 #endif
 
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+#include <zephyr/sys/reboot.h>
+#endif
+
+#ifdef CONFIG_GAITQ_MCUBOOT_EXT
+#include "gaitq_mcuboot_ext.h"
+#endif
+
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+#include "reboot_counter.h"
+#endif
+
 #ifdef CONFIG_MCUBOOT_SERIAL
 #include "boot_serial/boot_serial.h"
 #include "serial_adapter/serial_adapter.h"
@@ -517,6 +529,31 @@ static bool detect_pin(void)
 }
 #endif
 
+static void usb_status_cb(enum usb_dc_status_code status, const uint8_t *param) {
+#if defined(CONFIG_USB_DISCONNECT_REBOOT)
+    if(status == USB_DC_DISCONNECTED) {
+        BOOT_LOG_INF("USB disconnected: Rebooting");
+        sys_reboot(SYS_REBOOT_COLD);
+    }
+#endif
+}
+
+#if defined(CONFIG_BOOT_USB_DFU_GPIO)
+static void enable_dfu_mode(void) {
+    // Add USB status callback
+    int rc = usb_enable(usb_status_cb);
+    if (rc) {
+        BOOT_LOG_ERR("Cannot enable USB");
+    } else {
+        BOOT_LOG_INF("Waiting for USB DFU");
+        wait_for_usb_dfu(K_FOREVER);
+#if defined(CONFIG_GAITQ_MCUBOOT_EXT)
+        wait_for_netcpu_update();
+#endif
+    }
+}
+#endif
+
 void main(void)
 {
     struct boot_rsp rsp;
@@ -562,21 +599,25 @@ void main(void)
 #endif
 
 #if defined(CONFIG_BOOT_USB_DFU_GPIO)
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+    const uint8_t pin_val = detect_pin();
+    const bool rc_is_max = reboot_counter_is_max();
+
+    reboot_counter_increment();
+
+    BOOT_LOG_INF("pin_val=%d, rc_is_max=%d", pin_val, rc_is_max);
+
+    if (pin_val || rc_is_max) {
+#else
     if (detect_pin()) {
+#endif    // defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
         gpio_pin_set_dt(&led0, 1);
 #endif
 
         mcuboot_status_change(MCUBOOT_STATUS_USB_DFU_ENTERED);
 
-        rc = usb_enable(NULL);
-        if (rc) {
-            BOOT_LOG_ERR("Cannot enable USB");
-        } else {
-            BOOT_LOG_INF("Waiting for USB DFU");
-            wait_for_usb_dfu(K_FOREVER);
-            BOOT_LOG_INF("USB DFU wait time elapsed");
-        }
+        enable_dfu_mode();
     }
 #elif defined(CONFIG_BOOT_USB_DFU_WAIT)
     rc = usb_enable(NULL);
@@ -621,7 +662,11 @@ void main(void)
 
         mcuboot_status_change(MCUBOOT_STATUS_NO_BOOTABLE_IMAGE_FOUND);
 
+#if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
+        enable_dfu_mode();
+#else
         FIH_PANIC;
+#endif   // CONFIG_BOOT_USB_DFU_RESET_COUNTER
     }
 
     BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
