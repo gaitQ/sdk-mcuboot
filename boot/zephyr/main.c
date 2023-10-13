@@ -463,12 +463,22 @@ static void usb_status_cb(enum usb_dc_status_code status, const uint8_t *param) 
 }
 
 #if defined(CONFIG_BOOT_USB_DFU_GPIO)
+/*
+ * Timer needed is periodically feed the WDT during DFU.
+ * CONFIG_BOOT_WATCHDOG_FEED enabled by default.
+ */
+static void wdt_feeder_timer_handler(struct k_timer *timer) {
+    MCUBOOT_WATCHDOG_FEED();
+};
+K_TIMER_DEFINE(wdt_feeder_timer, wdt_feeder_timer_handler, NULL);
+
 static void enable_dfu_mode(void) {
     // Add USB status callback
     int rc = usb_enable(usb_status_cb);
     if (rc) {
         BOOT_LOG_ERR("Cannot enable USB");
     } else {
+        k_timer_start(&wdt_feeder_timer, K_SECONDS(5), K_SECONDS(5));
         BOOT_LOG_INF("Waiting for USB DFU");
         wait_for_usb_dfu(K_FOREVER);
 #if defined(CONFIG_GAITQ_MCUBOOT_EXT)
