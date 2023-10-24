@@ -83,6 +83,7 @@
 
 #if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
 #include "reboot_counter.h"
+#include <zephyr/drivers/i2c.h>
 #endif
 
 #ifdef CONFIG_MCUBOOT_SERIAL
@@ -535,12 +536,28 @@ int main(void)
 #if defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
     const uint8_t pin_val = io_detect_pin();
     const bool rc_is_max = reboot_counter_is_max();
+    bool vbus_present;
 
     reboot_counter_increment();
 
-    BOOT_LOG_INF("pin_val=%d, rc_is_max=%d", pin_val, rc_is_max);
+    const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+    const uint8_t slave_addr = DT_REG_ADDR(DT_NODELABEL(bq21061));
 
-    if (pin_val || rc_is_max) {
+    // Read PMIC register to check if USB power connected
+
+    uint8_t stats0_reg_val;
+    int err = i2c_burst_read(i2c_dev, slave_addr, /*BQ21061_REG_STAT0*/ 0x00, &stats0_reg_val, 1);
+
+    // If i2c_burst_read fails assume vbus is present
+    if (err) {
+        vbus_present = true;
+    } else{
+        vbus_present = stats0_reg_val & /*VIN_PGOOD_STAT*/BIT(0);
+    }
+
+    BOOT_LOG_INF("pin_val=%d, rc_is_max=%d, vbus_present=%d", pin_val, rc_is_max, vbus_present);
+
+    if (rc_is_max || (pin_val && vbus_present)) {
 #else
     if (io_detect_pin()) {
 #endif    // defined(CONFIG_BOOT_USB_DFU_RESET_COUNTER)
